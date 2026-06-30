@@ -177,4 +177,4 @@ def watch_log_stream(file_path, interval_seconds=10):
                 time.sleep(1)
 
 if __name__ == "__main__":
-    watch_log_stream(LOG_FILE_PATH, interval_seconds=30)
+    watch_log_stream(LOG_FILE_PATH, interval_seconds=15)
