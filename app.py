@@ -178,3 +178,5 @@ def watch_log_stream(file_path, interval_seconds=10):
 
 if __name__ == "__main__":
     watch_log_stream(LOG_FILE_PATH, interval_seconds=15)
+
+# Testing the Script for The "Malformed Text Bomb" Test (Regex Stress)
