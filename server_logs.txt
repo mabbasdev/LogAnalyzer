@@ -1,0 +1,4 @@
+2026-06-30 12:00:01 INFO User admin logged in from IP 192.168.1.50
+2026-06-30 12:01:15 WARNING Failed login attempt from IP 192.168.1.102
+2026-06-30 12:02:40 ERROR Database connection timeout on port 3306
+2026-06-30 12:05:00 INFO Automated server backup successfully completed
