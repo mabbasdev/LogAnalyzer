@@ -2,48 +2,86 @@ import os
 import re
 from dotenv import load_dotenv
 from google import genai
+from pydantic import BaseModel, Field
 
-# Load environment variables from the .env file
+# Load secure environment configurations
 load_dotenv()
 
-# Verify and retrieve the secure API Key
 API_KEY = os.getenv("GEMINI_API_KEY")
 if not API_KEY:
-    raise ValueError("❌ Critical Error: GEMINI_API_KEY is missing from the .env file!")
+    raise ValueError("Error: GEMINI_API_KEY missing from .env file!")
 
-# Initialize the modern Google GenAI Client
+# Initialize the Google GenAI Client
 client = genai.Client(api_key=API_KEY)
 
-def local_privacy_anonymizer(raw_text):
-    """
-    Scrubs sensitive network infrastructure data locally before transmission.
-    Replaces real IPv4 addresses with an anonymous token placeholder.
-    """
-    # Regex pattern to match standard IPv4 addresses (e.g., 192.168.1.50)
-    ip_pattern = r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b'
-    
-    # Track and replace matching instances
-    anonymized_text = re.sub(ip_pattern, "[MASKED_IP_NODE]", raw_text)
-    return anonymized_text
+# ==========================================
+# SCHEMA ENFORCEMENT ENGINE
+# ==========================================
+class ThreatAnalysisReport(BaseModel):
+    """Defines a strict enterprise data contract for the AI's analysis output."""
+    threat_detected: bool = Field(
+        description="True if an operational vulnerability, security risk, or system error exists."
+    )
+    severity: str = Field(
+        description="Strictly classify threat intensity as: INFO, LOW, MEDIUM, or CRITICAL."
+    )
+    reasoning: str = Field(
+        description="A concise summary detailing the core security or operational reason behind this evaluation."
+    )
+    recommended_action: str = Field(
+        description="Actionable remediation step for the infrastructure operations team to resolve the issue."
+    )
 
-def test_ai_connection():
-    """Validates the API connection with a rapid, lightweight model test."""
-    print("🚀 Initializing connection to Gemini AI Studio...")
+# ==========================================
+# COMPLIANCE & ANALYSIS FUNCTIONS
+# ==========================================
+def local_privacy_anonymizer(raw_text):
+    """Scrubs sensitive infrastructure IP nodes locally before transmission."""
+    ip_pattern = r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b'
+    return re.sub(ip_pattern, "[MASKED_IP_NODE]", raw_text)
+
+def process_and_analyze_logs(log_text):
+    """Cleans raw logs and evaluates vulnerabilities with JSON Schema Enforcement."""
+    # 1. Enforce localized data protection regulations
+    clean_logs = local_privacy_anonymizer(log_text)
     
-    # We use the fast, lightweight model for our analysis automation
+    print("Passing scrubbed batch data to Gemini Security Agent...")
+    
+    # 2. Define operational guidelines using a specialized system prompt
+    system_role = (
+        "You are an elite Security Operations Center (SOC) Specialist and Infrastructure Analyst. "
+        "Review the provided log stream batch. Extract, categorize, and cross-reference records "
+        "to discover security violations, hardware degradation, or performance anomalies."
+    )
+    
+    # 3. Call the modern SDK with type-safe structured constraints
     response = client.models.generate_content(
         model='gemini-2.5-flash',
-        contents='Respond with exactly one word: Connected.'
+        contents=f"System Role: {system_role}\n\nAnalyze the following log payload:\n{clean_logs}",
+        config={
+            'response_mime_type': 'application/json',
+            'response_schema': ThreatAnalysisReport, # Enforces strict object blueprint
+        }
     )
-    print(f"🤖 API Status Verification: {response.text.strip()}\n")
-
-# --- Execution Test ---
-if __name__ == "__main__":
-    # 1. Quick test to verify our .env key successfully authenticates
-    test_ai_connection()
     
-    # 2. Test our local privacy layer
-    sample_sensitive_log = "2026-06-30 ERROR: Failed breach attempt detected from unauthorized host IP 10.0.0.158."
-    print("🔍 Testing Local Compliance Layer...")
-    print(f"❌ Original Log: {sample_sensitive_log}")
-    print(f"✅ Scrubbed Log: {local_privacy_anonymizer(sample_sensitive_log)}")
+    return response.text
+
+# ==========================================
+# RUNTIME PIPELINE EXECUTION
+# ==========================================
+if __name__ == "__main__":
+    # Simulate a critical unauthorized access log vector
+    malicious_log_batch = (
+        "2026-06-30 14:10:00 INFO Connection initiated from 192.168.10.45\n"
+        "2026-06-30 14:10:01 WARNING Access Denied for root user from 192.168.10.45\n"
+        "2026-06-30 14:10:02 WARNING Access Denied for root user from 192.168.10.45\n"
+        "2026-06-30 14:10:03 WARNING Access Denied for root user from 192.168.10.45\n"
+        "2026-06-30 14:10:05 CRITICAL Automated brute-force lockout triggered for node 192.168.10.45"
+    )
+    
+    print("Raw System Log Payload Triggered.")
+    # Execute analysis pipeline
+    analysis_json_output = process_and_analyze_logs(malicious_log_batch)
+    
+    print("\nParsed JSON Response from Gemini:")
+    print(analysis_json_output)
