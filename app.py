@@ -3,6 +3,7 @@ import re
 import json
 import time
 import logging
+import random
 from dotenv import load_dotenv
 from google import genai
 from pydantic import BaseModel, Field
@@ -39,11 +40,37 @@ class ThreatAnalysisReport(BaseModel):
 # COMPLIANCE & ANALYSIS FUNCTIONS
 # ==========================================
 def local_privacy_anonymizer(raw_text):
-    ip_pattern = r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b'
-    return re.sub(ip_pattern, "[MASKED_IP_NODE]", raw_text)
+    """
+    Scrubs sensitive infrastructure IP nodes locally before transmission.
+    Enhanced to handle concatenated text anomalies where IPs run directly 
+    into trailing timestamps or alphanumeric strings without boundaries.
+    """
+    logger.debug("Entering local_privacy_anonymizer function.")
+    
+    ip_pattern = r'\b([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})'
+    logger.debug(f"Applying robust regex evaluation pattern: {ip_pattern}")
+    
+    def replace_ip(match):
+        full_match = match.group(1)
+        parts = full_match.split('.')
+        last_octet = parts[3]
+        
+        if len(last_octet) > 3:
+            # Reconstruct trailing concatenated data lines cleanly
+            trailing_junk = parts[3][2:]
+            return f"[MASKED_IP_NODE]{trailing_junk}"
+        
+        return "[MASKED_IP_NODE]"
+
+    anonymized_text = re.sub(ip_pattern, replace_ip, raw_text)
+    logger.debug("Localized scrubbing layer completed successfully.")
+    return anonymized_text
 
 def process_and_analyze_logs(log_text):
+    """Cleans raw logs and evaluates vulnerabilities with JSON Schema Enforcement."""
     logger.debug("Beginning processing window evaluation for log batch.")
+    
+    # Cleanse the incoming text through our compliance engine
     clean_logs = local_privacy_anonymizer(log_text)
     
     system_role = (
@@ -51,21 +78,40 @@ def process_and_analyze_logs(log_text):
         "Review the log payload and structure violations using the assigned schema constraints."
     )
     
-    logger.info("Dispatching live filtered log payload batch to API endpoint...")
+    max_retries = 3
+    base_delay = 2  # Start with a 2-second delay
     
-    response = client.models.generate_content(
-        model='gemini-2.5-flash',
-        contents=f"System Role: {system_role}\n\nAnalyze the following log payload:\n{clean_logs}",
-        config={
-            'response_mime_type': 'application/json',
-            'response_schema': ThreatAnalysisReport,
-        }
-    )
-    return response.text
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"Dispatching live filtered log payload batch to API endpoint (Attempt {attempt + 1}/{max_retries})...")
+            
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=f"System Role: {system_role}\n\nAnalyze the following log payload:\n{clean_logs}",
+                config={
+                    'response_mime_type': 'application/json',
+                    'response_schema': ThreatAnalysisReport,
+                }
+            )
+            return response.text
+            
+        except Exception as api_error:
+            # Check if we have retries left
+            if attempt < max_retries - 1:
+                # Calculate backoff delay: base_delay * (2 ^ attempt) + a tiny bit of random noise (jitter)
+                delay = (base_delay * (2 ** attempt)) + random.uniform(0, 1)
+                logger.warning(f"API dynamic overload encountered ({str(api_error)}). Retrying in {delay:.2f} seconds...")
+                time.sleep(delay)
+            else:
+                # Exhausted all attempts; re-raise the exception to be logged by the main pipeline loop
+                logger.error("All scheduled API connection retry attempts exhausted.")
+                raise api_error
 
 def execute_alert_router(json_string_output):
+    """Parses structured responses and routes actionable operations based on threat tier."""
     try:
         report_data = json.loads(json_string_output)
+        print(f"DEBUG - Raw JSON received: {json_string_output}")
         severity_tier = report_data.get("severity", "INFO").upper()
         is_threat = report_data.get("threat_detected", False)
         
@@ -85,15 +131,14 @@ def watch_log_stream(file_path, interval_seconds=10):
     """
     Passively monitors a live log file. Accumulates incoming records over a 
     sliding interval window before batching requests to control API quotas.
+    Retains buffer pool states in memory if the downstream analysis engine fails.
     """
     logger.info(f"Starting Active Watchdog on target file path: {file_path}")
     
     if not os.path.exists(file_path):
-        # Establish an empty file placeholder if it doesn't exist yet
         with open(file_path, "w") as f:
             f.write("")
             
-    # Seek directly to the end of the existing file to avoid repeating historic logs
     with open(file_path, "r") as file_handle:
         file_handle.seek(0, os.SEEK_END)
         logger.info("Watchdog synced to file stream terminus. Standing by for live inputs...")
@@ -105,33 +150,31 @@ def watch_log_stream(file_path, interval_seconds=10):
             current_line = file_handle.readline()
             
             if current_line:
-                # Capture new appended data line into the local buffer pool
                 if current_line.strip():
                     logger.debug(f"Intercepted new log event line: '{current_line.strip()}'")
                     buffer_pool.append(current_line)
             else:
-                # No new text lines found; check if the buffering window has lapsed
                 elapsed_time = time.time() - last_flush_time
                 
                 if buffer_pool and elapsed_time >= interval_seconds:
                     logger.info(f"Sliding interval window lapsed. Compiling {len(buffer_pool)} batched events.")
-                    
-                    # Combine all lines inside our buffer window into a single payload chunk
                     compiled_payload = "".join(buffer_pool)
                     
                     try:
                         analysis_result = process_and_analyze_logs(compiled_payload)
                         execute_alert_router(analysis_result)
+                        
+                        # SUCCESS TRACE: Only clear memory and advance time window if transaction completes
+                        buffer_pool.clear()
+                        last_flush_time = time.time()
+                        
                     except Exception as ex:
-                        logger.error(f"Pipeline processing interruption: {str(ex)}")
-                    
-                    # Clear out the buffer pool and reset timer
-                    buffer_pool.clear()
-                    last_flush_time = time.time()
+                        # OUTAGE RECOVERY TRACE: Retain current logs in RAM buffer pool.
+                        # Move the window timestamp forward to calculate the next processing interval check.
+                        logger.error(f"Pipeline processing interruption: {str(ex)}. Retaining data batch in memory state.")
+                        last_flush_time = time.time()
                 
-                # Relieve local processor loop stress
                 time.sleep(1)
 
 if __name__ == "__main__":
-    # Begin infinite monitoring loop (safely close anytime using Ctrl+C)
     watch_log_stream(LOG_FILE_PATH, interval_seconds=30)
