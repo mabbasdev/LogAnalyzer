@@ -5,6 +5,7 @@ import time
 import logging
 import random
 import smtplib
+import threading  # Added for asynchronous execution
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import requests  # Ensure 'pip install requests' is run in your venv
@@ -52,11 +53,11 @@ def send_email_alert(subject, message_body):
     receiver_email = os.getenv("RECEIVER_EMAIL")
 
     if not all([smtp_server, smtp_port, sender_email, sender_password, receiver_email]):
-        logger.error("Alerting Failure: Email configuration tokens missing from environment.")
+        logger.error("[THREAD-EMAIL] Alerting Failure: Email configuration tokens missing from environment.")
         return
 
     try:
-        logger.info(f"Initializing SMTP handshakes with secure server: {smtp_server}...")
+        logger.info(f"[THREAD-EMAIL] Initializing SMTP handshakes with secure server: {smtp_server}...")
         msg = MIMEMultipart()
         msg['From'] = sender_email
         msg['To'] = receiver_email
@@ -71,9 +72,10 @@ def send_email_alert(subject, message_body):
         server.sendmail(sender_email, receiver_email, msg.as_string())
         server.quit()
         
-        logger.info("Email alert dispatched successfully to target routing team.")
+        logger.info("[THREAD-EMAIL] Email alert dispatched successfully to target routing team.")
     except Exception as email_ex:
-        logger.error(f"Failed to transmit email notification packet: {str(email_ex)}")
+        # Crucial Thread Isolation: Catching exceptions explicitly inside the background scope
+        logger.error(f"[THREAD-EMAIL] Failed to transmit email notification packet: {str(email_ex)}")
 
 def send_whatsapp_alert(message_body):
     """Dispatches an automated alert payload through a downstream WhatsApp API Gateway."""
@@ -84,10 +86,9 @@ def send_whatsapp_alert(message_body):
     to_num = os.getenv("WHATSAPP_TO_NUMBER")
 
     if not all([api_url, from_num, to_num]):
-        logger.error("Alerting Failure: WhatsApp routing configurations missing from environment.")
+        logger.error("[THREAD-WHATSAPP] Alerting Failure: WhatsApp routing configurations missing from environment.")
         return
 
-    # Truncate slightly if message payload exceeds WhatsApp single text limits
     payload = {
         "From": from_num,
         "To": to_num,
@@ -95,19 +96,18 @@ def send_whatsapp_alert(message_body):
     }
 
     try:
-        logger.info("Shipping webhook payload block to remote WhatsApp API Endpoint...")
+        logger.info("[THREAD-WHATSAPP] Shipping webhook payload block to remote WhatsApp API Endpoint...")
         
-        # Authenticate if using a service like Twilio, otherwise adjust headers as your custom API expects
         auth = (account_sid, auth_token) if account_sid and auth_token else None
-        
         response = requests.post(api_url, data=payload, auth=auth, timeout=10)
         
         if response.status_code in [200, 201]:
-            logger.info("WhatsApp cloud network confirmed message drop success.")
+            logger.info("[THREAD-WHATSAPP] WhatsApp cloud network confirmed message drop success.")
         else:
-            logger.error(f"WhatsApp API rejected delivery request packet. Status Code: {response.status_code}, Context: {response.text}")
+            logger.error(f"[THREAD-WHATSAPP] WhatsApp API rejected delivery request packet. Status Code: {response.status_code}, Context: {response.text}")
     except Exception as api_ex:
-        logger.error(f"Fatal communication network fault during WhatsApp routing transmission: {str(api_ex)}")
+        # Crucial Thread Isolation: Catching exceptions explicitly inside the background scope
+        logger.error(f"[THREAD-WHATSAPP] Fatal communication network fault during WhatsApp routing transmission: {str(api_ex)}")
 
 # ==========================================
 # COMPLIANCE & ANALYSIS FUNCTIONS
@@ -161,7 +161,7 @@ def process_and_analyze_logs(log_text):
                 raise api_error
 
 def execute_alert_router(json_string_output):
-    """Parses structured responses and routes alerts out to remote channels on CRITICAL findings."""
+    """Parses structured responses and dispatches async non-blocking background alert worker threads."""
     try:
         report_data = json.loads(json_string_output)
         print(f"DEBUG - Raw JSON received: {json_string_output}")
@@ -169,7 +169,7 @@ def execute_alert_router(json_string_output):
         is_threat = report_data.get("threat_detected", False)
         
         if is_threat and severity_tier == "CRITICAL":
-            logger.warning("CRITICAL ROUTING WARNING: Immediate notification pipeline triggered.")
+            logger.warning("CRITICAL ROUTING WARNING: Immediate asynchronous notification pipeline triggered.")
             
             # Construct clear metrics alerts payload text
             alert_subject = "[🚨 CRITICAL SECURITY THREAT] Automated SOC Pipeline Breach Warning"
@@ -179,11 +179,24 @@ def execute_alert_router(json_string_output):
                 f"Remediation Strategy:\n{report_data.get('recommended_action')}\n"
             )
             
-            # Execute physical external dispatch layers
-            send_email_alert(alert_subject, alert_body)
-            send_whatsapp_alert(alert_body)
+            # PERFORMANCE UPGRADE: Spin up background daemon threads to execute network delivery
+            # Passing parameters cleanly avoids mutable memory conflicts across shared threads.
+            email_thread = threading.Thread(
+                target=send_email_alert, 
+                args=(alert_subject, alert_body), 
+                daemon=True
+            )
+            whatsapp_thread = threading.Thread(
+                target=send_whatsapp_alert, 
+                args=(alert_body,), 
+                daemon=True
+            )
             
-            print(f"\n[ALERT DISPATCH COMPLETE]\n")
+            # Start background execution
+            email_thread.start()
+            whatsapp_thread.start()
+            
+            logger.info("Alert dispatcher threads spun up successfully. Returning focus to stream tailing.")
         else:
             logger.info(f"Routine operational processing complete. Status level marked: {severity_tier}")
             
@@ -236,5 +249,4 @@ def watch_log_stream(file_path, interval_seconds=10):
                 time.sleep(1)
 
 if __name__ == "__main__":
-    # Lowered window interval evaluation slightly for snappier debugging notifications
     watch_log_stream(LOG_FILE_PATH, interval_seconds=15)
