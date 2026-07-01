@@ -74,7 +74,6 @@ def send_email_alert(subject, message_body):
         
         logger.info("[THREAD-EMAIL] Email alert dispatched successfully to target routing team.")
     except Exception as email_ex:
-        # Crucial Thread Isolation: Catching exceptions explicitly inside the background scope
         logger.error(f"[THREAD-EMAIL] Failed to transmit email notification packet: {str(email_ex)}")
 
 def send_whatsapp_alert(message_body):
@@ -106,12 +105,17 @@ def send_whatsapp_alert(message_body):
         else:
             logger.error(f"[THREAD-WHATSAPP] WhatsApp API rejected delivery request packet. Status Code: {response.status_code}, Context: {response.text}")
     except Exception as api_ex:
-        # Crucial Thread Isolation: Catching exceptions explicitly inside the background scope
         logger.error(f"[THREAD-WHATSAPP] Fatal communication network fault during WhatsApp routing transmission: {str(api_ex)}")
 
 # ==========================================
 # COMPLIANCE & ANALYSIS FUNCTIONS
 # ==========================================
+def extract_real_ips(raw_text):
+    """Parses raw logs locally to pull genuine IP nodes for reporting visibility."""
+    ip_pattern = r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b'
+    found_ips = re.findall(ip_pattern, raw_text)
+    return list(set(found_ips))  # Return deduped list of unique IPs found
+
 def local_privacy_anonymizer(raw_text):
     """Scrubs sensitive infrastructure IP nodes locally before transmission."""
     logger.debug("Entering local_privacy_anonymizer function.")
@@ -160,8 +164,8 @@ def process_and_analyze_logs(log_text):
                 logger.error("All scheduled API connection retry attempts exhausted.")
                 raise api_error
 
-def execute_alert_router(json_string_output):
-    """Parses structured responses and dispatches async non-blocking background alert worker threads."""
+def execute_alert_router(json_string_output, extracted_ips=None):
+    """Parses structured responses, couples local contextual IPs, and dispatches rich corporate tickets."""
     try:
         report_data = json.loads(json_string_output)
         print(f"DEBUG - Raw JSON received: {json_string_output}")
@@ -171,16 +175,40 @@ def execute_alert_router(json_string_output):
         if is_threat and severity_tier == "CRITICAL":
             logger.warning("CRITICAL ROUTING WARNING: Immediate asynchronous notification pipeline triggered.")
             
-            # Construct clear metrics alerts payload text
-            alert_subject = "[🚨 CRITICAL SECURITY THREAT] Automated SOC Pipeline Breach Warning"
+            # Rehydrate extracted IPs for admin review formatting
+            ip_list_str = ", ".join(extracted_ips) if extracted_ips else "UNKNOWN / STRIPPED"
+            timestamp_now = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+            
+            # ==========================================
+            # COMPREHENSIVE CORPORATE INCIDENT REPORT SCRIPT
+            # ==========================================
+            alert_subject = f"[🚨 INCIDENT CRITICAL] SOC Security Breach Detected - Action Required"
             alert_body = (
-                f"🚨 SYSTEM INCIDENT WARNING ALERT:\n\n"
-                f"Reasoning:\n{report_data.get('reasoning')}\n\n"
-                f"Remediation Strategy:\n{report_data.get('recommended_action')}\n"
+                f"======================================================================\n"
+                f"                  SOC AUTOMATED SECURITY INCIDENT TICKET              \n"
+                f"======================================================================\n"
+                f"ID: SECURITY-INCIDENT-{int(time.time())}\n"
+                f"TIMESTAMP: {timestamp_now}\n"
+                f"SEVERITY LEVEL: CRITICAL\n"
+                f"PIPELINE STATUS: Incident Routing Active\n"
+                f"TARGETED NETWORK NODES (ATTACKER SOURCE IPs): {ip_list_str}\n\n"
+                f"----------------------------------------------------------------------\n"
+                f"1. INCIDENT THREAT EVALUATION BRIEF\n"
+                f"----------------------------------------------------------------------\n"
+                f"{report_data.get('reasoning')}\n\n"
+                f"----------------------------------------------------------------------\n"
+                f"2. IMMEDIATE REMEDIATION PLAYBOOK FOR JUNIOR DEV / SOC RUNBOOKS\n"
+                f"----------------------------------------------------------------------\n"
+                f"The following containment and cleanup protocol must be deployed instantly:\n"
+                f"{report_data.get('recommended_action')}\n\n"
+                f"----------------------------------------------------------------------\n"
+                f"3. ESCALATION AND REPORT CLOSURE REQUIREMENT\n"
+                f"----------------------------------------------------------------------\n"
+                f"Once remediation patches are verified locally, log an engineering closure status "
+                f"entry and trace dependencies back to source logs.\n"
+                f"======================================================================\n"
             )
             
-            # PERFORMANCE UPGRADE: Spin up background daemon threads to execute network delivery
-            # Passing parameters cleanly avoids mutable memory conflicts across shared threads.
             email_thread = threading.Thread(
                 target=send_email_alert, 
                 args=(alert_subject, alert_body), 
@@ -192,7 +220,6 @@ def execute_alert_router(json_string_output):
                 daemon=True
             )
             
-            # Start background execution
             email_thread.start()
             whatsapp_thread.start()
             
@@ -235,9 +262,13 @@ def watch_log_stream(file_path, interval_seconds=10):
                     logger.info(f"Sliding interval window lapsed. Compiling {len(buffer_pool)} batched events.")
                     compiled_payload = "".join(buffer_pool)
                     
+                    # EXTRACT LOCAL TARGET REHYDRATION PARAMETERS HERE
+                    real_ips = extract_real_ips(compiled_payload)
+                    
                     try:
                         analysis_result = process_and_analyze_logs(compiled_payload)
-                        execute_alert_router(analysis_result)
+                        # Pass extracted local parameters directly into router engine
+                        execute_alert_router(analysis_result, extracted_ips=real_ips)
                         
                         buffer_pool.clear()
                         last_flush_time = time.time()
